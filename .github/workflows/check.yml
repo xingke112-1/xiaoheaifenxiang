@@ -66,6 +66,28 @@ jobs:
         with:
           path: 'public'
 
+      # 等 artifact 在 GitHub 的列表里可见再部署：11 月 24 日三次部署失败，
+      # 都是上传完不到 1 秒部署就去查列表，查到空就报错。先轮询等它出现
+      # （最多 5 分钟），只认 15 分钟内新传的 artifact，避免重跑时认到旧的。
+      - name: Wait for Pages artifact to be visible
+        run: |
+          for i in $(seq 1 30); do
+            n=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=10" \
+              | jq -r --arg now "$(date -u +%s)" \
+              '[.artifacts[] | select(.name == "github-pages") | ((.created_at | fromdateiso8601) | (($now | tonumber) - .)) | select(. < 900)] | length' 2>/dev/null || echo 0)
+            if [ "$n" -gt 0 ]; then
+              echo "artifact visible after $((i * 10))s"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "artifact still not visible after 5 minutes"
+          exit 1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
